@@ -8,7 +8,34 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
+
+func LoggerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Crear un logger con logrus
+		logger := logrus.New()
+
+		// Configurar el formato del logger
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+			ForceColors:   true,
+		})
+
+		// Registrar la solicitud recibida
+		logger.Infof("Received request: %s %s", r.Method, r.URL.Path)
+
+		// Medir el tiempo de ejecución de la solicitud
+		start := time.Now()
+
+		// Llamar al siguiente handler
+		next.ServeHTTP(w, r)
+
+		// Registrar el tiempo que tomó la solicitud
+		logger.Infof("Request %s %s took %v", r.Method, r.URL.Path, time.Since(start))
+	})
+}
 
 // Definición del tipo de manejador
 type GoWayHandlerFunc func(h *GoWayContext)
@@ -28,7 +55,10 @@ func NewGoWay() *GoWay {
 // Método para ejecutar el servidor
 func (g *GoWay) Run(addr string, ctx context.Context) error {
 	mux := http.NewServeMux()
+
+	mux.Handle("/", LoggerMiddleware(mux))
 	for pattern, handler := range g.routes {
+		logrus.Infof("Registered route: %s", pattern) // Log de la ruta registrada
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			ctx := NewGoWayContext(w, r)
 			handler(ctx)

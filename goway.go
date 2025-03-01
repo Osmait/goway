@@ -1,10 +1,13 @@
 package goway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"time"
 )
 
 // Definición del tipo de manejador
@@ -23,7 +26,7 @@ func NewGoWay() *GoWay {
 }
 
 // Método para ejecutar el servidor
-func (g *GoWay) Run(addr string) error {
+func (g *GoWay) Run(addr string, ctx context.Context) error {
 	mux := http.NewServeMux()
 	for pattern, handler := range g.routes {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +34,27 @@ func (g *GoWay) Run(addr string) error {
 			handler(ctx)
 		})
 	}
-	fmt.Println("Server running on", addr)
-	return http.ListenAndServe(addr, mux)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	// Ejecutar el servidor en una goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("server shut down", err)
+		}
+	}()
+
+	// Esperar la señal de terminación
+	<-ctx.Done()
+	// Crear contexto con timeout para apagar el servidor
+	ctxShutDown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	log.Println("Shutting down server...")
+
+	return srv.Shutdown(ctxShutDown)
 }
 
 // Registrar rutas

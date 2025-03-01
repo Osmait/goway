@@ -12,6 +12,47 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type CustomError struct {
+	Message    string
+	StatusCode int
+}
+
+func (e *CustomError) Error() string {
+	return e.Message
+}
+
+func NewCustomError(message string, statusCode int) *CustomError {
+	return &CustomError{
+		Message:    message,
+		StatusCode: statusCode,
+	}
+}
+
+// Middleware de manejo de errores mejorado con error personalizado
+func ErrorHandlingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				var customErr *CustomError
+				switch e := err.(type) {
+				case *CustomError:
+					customErr = e
+				default:
+					customErr = NewCustomError("Internal Server Error", http.StatusInternalServerError)
+				}
+
+				// Loguear el error
+				log.Printf("Error: %v", customErr)
+
+				// Devolver el error al cliente
+				http.Error(w, customErr.Message, customErr.StatusCode)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func LoggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Crear un logger con logrus
@@ -42,14 +83,18 @@ type GoWayHandlerFunc func(h *GoWayContext)
 
 // GoWay framework
 type GoWay struct {
-	routes map[string]GoWayHandlerFunc
+	routes      map[string]GoWayHandlerFunc
+	middlewares []func(http.Handler) http.Handler // Lista de middlewares
 }
 
 // Constructor
 func NewGoWay() *GoWay {
-	return &GoWay{
+	server := &GoWay{
 		routes: make(map[string]GoWayHandlerFunc),
 	}
+	server.Use(LoggerMiddleware)
+	server.Use(ErrorHandlingMiddleware)
+	return server
 }
 
 // Método para ejecutar el servidor
@@ -58,11 +103,15 @@ func (g *GoWay) Run(addr string, ctx context.Context) error {
 
 	for pattern, handler := range g.routes {
 		logrus.Infof("Registered route: %s", pattern) // Log de la ruta registrada
-		mux.Handle(pattern, LoggerMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Crear el manejador para la ruta actual
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Crear contexto para manejar la petición
 			ctx := NewGoWayContext(w, r)
 			handler(ctx)
-		})))
+		})
+
+		// Aplicar la cadena de middlewares y luego el manejador de la ruta
+		mux.Handle(pattern, ChainMiddlewares(g.middlewares, handler))
 	}
 	srv := &http.Server{
 		Addr:    addr,
@@ -98,6 +147,18 @@ func (g *GoWay) GET(pattern string, handler GoWayHandlerFunc) {
 
 func (g *GoWay) POST(pattern string, handler GoWayHandlerFunc) {
 	g.Handle("POST", pattern, handler)
+}
+
+func (g *GoWay) Use(middleware func(http.Handler) http.Handler) {
+	g.middlewares = append(g.middlewares, middleware)
+}
+
+func ChainMiddlewares(middlewares []func(http.Handler) http.Handler, final http.Handler) http.Handler {
+	// Comienza con el manejador final y aplica cada middleware en orden inverso
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		final = middlewares[i](final)
+	}
+	return final
 }
 
 // GoWayContext maneja la petición y respuesta

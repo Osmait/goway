@@ -56,7 +56,6 @@ func NewGoWay() *GoWay {
 func (g *GoWay) Run(addr string, ctx context.Context) error {
 	mux := http.NewServeMux()
 
-	mux.Handle("/", LoggerMiddleware(mux))
 	for pattern, handler := range g.routes {
 		logrus.Infof("Registered route: %s", pattern) // Log de la ruta registrada
 		mux.Handle(pattern, LoggerMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
